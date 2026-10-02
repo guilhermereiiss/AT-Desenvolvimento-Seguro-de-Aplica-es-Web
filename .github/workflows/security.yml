@@ -1,0 +1,67 @@
+name: security-pipeline
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  test:            # 1) testes funcionais + segurança (threat model -> pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  sast:            # 2) SAST em todo commit/PR: barato e rápido
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install bandit==1.9.4
+      - name: Relatório (medium+)
+        run: bandit -r app -ll -f txt || true
+      - name: GATE - bloqueia severidade HIGH (CVSS >= 7.0)
+        run: bandit -r app -lll
+
+  sca:             # 3) dependências: CVE conhecida bloqueia
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pip-audit
+      - name: GATE - qualquer vulnerabilidade conhecida em dependência direta
+        run: pip-audit -r requirements.txt
+
+  dast:            # 4) DAST passivo contra a app rodando (só depois dos gates baratos)
+    needs: [test, sast, sca]
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: dev
+      DATABASE_URL: sqlite:///./ci.db
+      MFA_SIMULATED_CODE: ci-mfa-code
+      LAB_CLIENT_ID: lab-ci
+      LAB_CLIENT_SECRET: ci-lab-secret
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: Sobe a API
+        run: |
+          export SECRET_KEY=$(openssl rand -hex 32)
+          nohup uvicorn app.main:app --port 8000 &
+          sleep 5
+      - name: ZAP baseline (passivo)
+        run: |
+          chmod 777 "$PWD"
+          docker run --rm --network host -v "$PWD":/zap/wrk/:rw ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8000 -J zap.json -r zap.html -I
+      - name: GATE - bloqueia alerta High
+        run: python scripts/zap_gate.py zap.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: zap-report, path: "zap.*" }

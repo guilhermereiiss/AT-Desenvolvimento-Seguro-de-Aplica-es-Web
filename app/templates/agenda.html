@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Agenda {{ dia }}{% endblock %}
+{% block heading %}Agenda do dia {{ dia }}{% endblock %}
+{% block content %}
+<table>
+  <thead><tr><th>Hora</th><th>Paciente</th><th>Profissional</th><th>Motivo</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for c in consultas %}
+    <tr>
+      <td>{{ c.hora }}</td>
+      <td>{{ c.paciente }}</td>
+      <td>{{ c.profissional }}</td>
+      <td>{{ c.motivo }}</td>
+      <td>{{ c.status }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">Sem consultas neste dia.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
